@@ -65,7 +65,8 @@ function runExtraction(bytes: Uint8Array) {
     const total = lua.lua_tointeger(current, 2);
     const detailBytes = lua.lua_tostring(current, 3);
     const detail = detailBytes instanceof Uint8Array ? to_jsstring(detailBytes) : undefined;
-    return lauxlib.luaL_error(current, to_luastring(formatModelBuildFailure(failed, total, detail)));
+    const message = formatModelBuildFailure(failed, total, detail);
+    return lauxlib.luaL_error(current, to_luastring("%s"), to_luastring(message));
   };
 
   lua.lua_newtable(state);

@@ -11,4 +11,9 @@ describe("ROM model build errors", () => {
     expect(formatModelBuildFailure(2, 151, undefined))
       .toBe("2 of 151 model files could not be built: unknown model build error");
   });
+
+  it("preserves percent signs from Fengari errors", () => {
+    expect(formatModelBuildFailure(151, 151, "invalid option '%0' to 'lua_pushfstring'"))
+      .toBe("all 151 model files failed: invalid option '%0' to 'lua_pushfstring'");
+  });
 });
