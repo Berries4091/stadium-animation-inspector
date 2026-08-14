@@ -9,11 +9,11 @@ describe("Gen 1 Pokemon metadata", () => {
     expect(GEN1_POKEMON[150]).toEqual({ species: 151, name: "Mew" });
   });
 
-  it("formats matching SpriteCollab idle sprite URLs", () => {
+  it("formats matching SpriteCollab portrait URLs", () => {
     expect(pokemonSpriteUrl(1)).toBe(
-      "https://raw.githubusercontent.com/PMDCollab/SpriteCollab/master/sprite/0001/Idle-Anim.png",
+      "https://raw.githubusercontent.com/PMDCollab/SpriteCollab/master/portrait/0001/Normal.png",
     );
-    expect(pokemonSpriteUrl(151)).toContain("/0151/Idle-Anim.png");
+    expect(pokemonSpriteUrl(151)).toContain("/portrait/0151/Normal.png");
   });
 
   it("provides a readable fallback for unknown species", () => {

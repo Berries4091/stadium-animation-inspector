@@ -41,5 +41,5 @@ export function pokemonName(species: number) {
 
 export function pokemonSpriteUrl(species: number) {
   const number = String(species).padStart(4, "0");
-  return `https://raw.githubusercontent.com/PMDCollab/SpriteCollab/master/sprite/${number}/Idle-Anim.png`;
+  return `https://raw.githubusercontent.com/PMDCollab/SpriteCollab/master/portrait/${number}/Normal.png`;
 }
