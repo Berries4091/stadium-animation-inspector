@@ -18,35 +18,40 @@ if (!romPath) {
   }
 
   let response;
-  let lastProgress = 0;
   globalThis.self = {
     postMessage(message) {
-      if (message.type === "progress") {
-        lastProgress = message.done;
-        if (message.done === message.total || message.done % 25 === 0) {
-          nodeProcess.stdout.write(`ROM self-test: ${message.done}/${message.total}\n`);
-        }
-      } else {
-        response = message;
-      }
+      response = message;
     },
   };
 
   // Match the browser runtime that previously exposed the Fengari failure.
   globalThis.process = undefined;
   await import(pathToFileURL(`./dist/assets/${workerAsset}`).href);
-  self.onmessage({
-    data: {
-      bytes: rom.buffer.slice(rom.byteOffset, rom.byteOffset + rom.byteLength),
-    },
+
+  function send(data) {
+    response = undefined;
+    self.onmessage({ data });
+    if (response?.type === "error") throw new Error(response.message);
+    return response;
+  }
+
+  const ready = send({
+    type: "open",
+    bytes: rom.buffer.slice(rom.byteOffset, rom.byteOffset + rom.byteLength),
   });
-
-  if (response?.type === "error") {
-    throw new Error(response.message);
-  }
-  if (response?.type !== "done" || response.packs.length !== 151 || lastProgress !== 151) {
-    throw new Error(`ROM self-test produced an unexpected result: ${JSON.stringify(response)}`);
+  if (ready?.type !== "ready" || ready.species.length !== 151) {
+    throw new Error(`ROM self-test did not produce a 151-species ready response: ${JSON.stringify(ready)}`);
   }
 
-  nodeProcess.stdout.write(`ROM self-test passed: ${response.packs.length} model packs built.\n`);
+  for (const species of [1, 25, 151]) {
+    const built = send({ type: "build", requestId: species, species });
+    if (built?.type !== "built" || built.requestId !== species || built.species !== species) {
+      throw new Error(`ROM self-test produced an unexpected build response: ${JSON.stringify(built)}`);
+    }
+    const magic = new TextDecoder().decode(new Uint8Array(built.bytes, 0, 4));
+    if (magic !== "DSM3") throw new Error(`ROM self-test produced an invalid DSM for species ${species}`);
+    nodeProcess.stdout.write(`ROM self-test: built ${String(species).padStart(3, "0")}\n`);
+  }
+
+  nodeProcess.stdout.write("ROM self-test passed: ROM opened and three models built on demand.\n");
 }

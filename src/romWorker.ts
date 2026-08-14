@@ -5,14 +5,24 @@ import stadiumFragmentSource from "./vendor/stadium/StadiumFragment.lua?raw";
 import stadiumFxSource from "./vendor/stadium/StadiumFx.lua?raw";
 import stadiumRomSource from "./vendor/stadium/StadiumRom.lua?raw";
 import { STADIUM_LUA_COMPATIBILITY } from "./luaCompatibility";
-import { formatModelBuildFailure } from "./romErrors";
 
-type WorkerMessage = { bytes: ArrayBuffer };
+type WorkerMessage =
+  | { type: "open"; bytes: ArrayBuffer }
+  | { type: "build"; requestId: number; species: number };
+
+type PackedModel = { species: number; bytes: ArrayBuffer };
+
 type WorkerResponse =
-  | { type: "progress"; done: number; total: number }
-  | { type: "done"; packs: Array<{ species: number; bytes: ArrayBuffer }> }
-  | { type: "error"; message: string };
+  | { type: "ready"; species: number[] }
+  | { type: "built"; requestId: number; species: number; bytes: ArrayBuffer }
+  | { type: "error"; requestId?: number; message: string };
 
+type Runtime = {
+  build(species: number): PackedModel;
+  close(): void;
+};
+
+const N_POKEMON = 151;
 const sources: Record<string, string> = {
   Noise: noiseSource,
   StadiumRom: stadiumRomSource,
@@ -31,8 +41,8 @@ function errorMessage(state: any) {
   return message instanceof Uint8Array ? to_jsstring(message) : String(message || "Lua extraction failed.");
 }
 
-function runExtraction(bytes: Uint8Array) {
-  const packs: Array<{ species: number; bytes: ArrayBuffer }> = [];
+function createRuntime(bytes: Uint8Array): Runtime {
+  const packs: PackedModel[] = [];
   const state = lauxlib.luaL_newstate();
   lualib.luaL_openlibs(state);
 
@@ -42,32 +52,20 @@ function runExtraction(bytes: Uint8Array) {
     const name = nameBytes instanceof Uint8Array ? to_jsstring(nameBytes) : "";
     const source = sources[name];
     if (!source) return lauxlib.luaL_error(current, to_luastring(`unknown Stadium module ${name}`));
-    if (lauxlib.luaL_loadstring(current, to_luastring(source)) !== lua.LUA_OK) return lauxlib.lua_error(current);
+    if (lauxlib.luaL_loadstring(current, to_luastring(source)) !== lua.LUA_OK) return lua.lua_error(current);
     lua.lua_getglobal(current, to_luastring("V"));
-    if (lua.lua_pcall(current, 1, 1, 0) !== lua.LUA_OK) return lauxlib.lua_error(current);
+    if (lua.lua_pcall(current, 1, 1, 0) !== lua.LUA_OK) return lua.lua_error(current);
     return 1;
   };
   const writePack = (current: any) => {
     const species = lua.lua_tointeger(current, 1);
     const packed = lua.lua_tolstring(current, 2);
-    if (!(packed instanceof Uint8Array)) return lauxlib.luaL_error(current, to_luastring("extractor returned invalid DSM bytes"));
+    if (!(packed instanceof Uint8Array)) {
+      return lauxlib.luaL_error(current, to_luastring("extractor returned invalid DSM bytes"));
+    }
     packs.push({ species, bytes: packed.slice().buffer });
     lua.lua_pushboolean(current, true);
     return 1;
-  };
-  const reportProgress = (current: any) => {
-    const done = lua.lua_tointeger(current, 1);
-    const total = lua.lua_tointeger(current, 2);
-    workerScope.postMessage({ type: "progress", done, total });
-    return 0;
-  };
-  const reportFailure = (current: any) => {
-    const failed = lua.lua_tointeger(current, 1);
-    const total = lua.lua_tointeger(current, 2);
-    const detailBytes = lua.lua_tostring(current, 3);
-    const detail = detailBytes instanceof Uint8Array ? to_jsstring(detailBytes) : undefined;
-    const message = formatModelBuildFailure(failed, total, detail);
-    return lauxlib.luaL_error(current, to_luastring("%s"), to_luastring(message));
   };
 
   lua.lua_newtable(state);
@@ -75,10 +73,6 @@ function runExtraction(bytes: Uint8Array) {
   lua.lua_setfield(state, -2, to_luastring("require"));
   lua.lua_pushjsfunction(state, writePack);
   lua.lua_setfield(state, -2, to_luastring("write"));
-  lua.lua_pushjsfunction(state, reportProgress);
-  lua.lua_setfield(state, -2, to_luastring("progress"));
-  lua.lua_pushjsfunction(state, reportFailure);
-  lua.lua_setfield(state, -2, to_luastring("reportFailure"));
 
   lua.lua_newtable(state);
   lua.lua_newtable(state);
@@ -93,7 +87,7 @@ function runExtraction(bytes: Uint8Array) {
   lua.lua_pushlstring(state, bytes, bytes.length);
   lua.lua_setglobal(state, to_luastring("ROM_BYTES"));
 
-  const script = `${STADIUM_LUA_COMPATIBILITY}
+  const initialize = `${STADIUM_LUA_COMPATIBILITY}
     local StadiumRom = V.require("StadiumRom")
     local StadiumBuild = V.require("StadiumBuild")
     local rom, err = StadiumRom.open(ROM_BYTES)
@@ -101,25 +95,77 @@ function runExtraction(bytes: Uint8Array) {
     if rom:modelCount() < StadiumRom.N_POKEMON then
       error("needs Pokemon Stadium US 1.0")
     end
-    local job = StadiumBuild.job(rom, V.write, StadiumRom.N_POKEMON)
-    while job:step() do V.progress(job.done, job.total) end
-    V.progress(job.done, job.total)
-    if job.error then error(job.error) end
-    if #job.failed > 0 then V.reportFailure(#job.failed, job.total, job.lastError) end
+    function V.build(species)
+      local result, buildErr = StadiumBuild.species(rom, species - 1)
+      if not result then error(buildErr or ("could not build species " .. species)) end
+      if not V.write(result.species, result.bytes) then
+        error("could not write species " .. result.species)
+      end
+      return true
+    end
   `;
-  const status = lauxlib.luaL_dostring(state, to_luastring(script));
-  if (status !== lua.LUA_OK) throw new Error(errorMessage(state));
-  return packs;
+
+  try {
+    const status = lauxlib.luaL_dostring(state, to_luastring(initialize));
+    if (status !== lua.LUA_OK) throw new Error(errorMessage(state));
+  } catch (cause) {
+    lua.lua_close(state);
+    throw cause;
+  }
+
+  return {
+    build(species) {
+      packs.length = 0;
+      lua.lua_settop(state, 0);
+      lua.lua_getglobal(state, to_luastring("V"));
+      lua.lua_getfield(state, -1, to_luastring("build"));
+      lua.lua_pushinteger(state, species);
+      const status = lua.lua_pcall(state, 1, 1, 0);
+      if (status !== lua.LUA_OK) {
+        const message = errorMessage(state);
+        lua.lua_settop(state, 0);
+        throw new Error(message);
+      }
+      lua.lua_settop(state, 0);
+      const pack = packs[0];
+      if (!pack || packs.length !== 1) throw new Error("extractor returned an unexpected number of DSM packs");
+      return pack;
+    },
+    close() {
+      lua.lua_close(state);
+    },
+  };
 }
 
+let runtime: Runtime | null = null;
+
 workerScope.onmessage = (event) => {
+  const message = event.data;
   try {
-    const packs = runExtraction(new Uint8Array(event.data.bytes));
+    if (message.type === "open") {
+      runtime?.close();
+      runtime = createRuntime(new Uint8Array(message.bytes));
+      workerScope.postMessage({
+        type: "ready",
+        species: Array.from({ length: N_POKEMON }, (_, index) => index + 1),
+      });
+      return;
+    }
+
+    if (!runtime) throw new Error("ROM is not open");
+    if (!Number.isInteger(message.species) || message.species < 1 || message.species > N_POKEMON) {
+      throw new Error(`invalid Pokemon species ${String(message.species)}`);
+    }
+    const pack = runtime.build(message.species);
     workerScope.postMessage(
-      { type: "done", packs },
-      packs.map((pack) => pack.bytes),
+      { type: "built", requestId: message.requestId, species: pack.species, bytes: pack.bytes },
+      [pack.bytes],
     );
   } catch (cause) {
-    workerScope.postMessage({ type: "error", message: cause instanceof Error ? cause.message : "ROM extraction failed." });
+    workerScope.postMessage({
+      type: "error",
+      ...(message.type === "build" ? { requestId: message.requestId } : {}),
+      message: cause instanceof Error ? cause.message : "ROM extraction failed.",
+    });
   }
 };
