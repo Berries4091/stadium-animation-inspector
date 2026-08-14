@@ -18,7 +18,10 @@ const ROM_MAGICS = [
 ];
 
 type BrowserSession = ImportedSession & {
+  worker: Worker;
   packs: Map<number, ArrayBuffer>;
+  pending: Map<number, { resolve: (bytes: ArrayBuffer) => void; reject: (cause: unknown) => void }>;
+  nextRequestId: number;
 };
 
 const browserSessions = new Map<string, BrowserSession>();
@@ -46,45 +49,101 @@ function newSessionId() {
 export function importStadiumRom(bytes: ArrayBuffer, onProgress?: (done: number, total: number) => void) {
   return new Promise<ImportedSession>((resolve, reject) => {
     const worker = new Worker(new URL("./romWorker.ts", import.meta.url), { type: "module" });
+    let session: BrowserSession | null = null;
+    let settled = false;
+
+    const fail = (cause: unknown) => {
+      const error = cause instanceof Error ? cause : new Error("ROM extraction failed.");
+      if (!settled) {
+        settled = true;
+        worker.terminate();
+        reject(error);
+      }
+      if (session) {
+        for (const pending of session.pending.values()) pending.reject(error);
+        session.pending.clear();
+      }
+    };
+
     worker.onmessage = (event: MessageEvent<{
-      type: "progress" | "done" | "error";
-      done?: number;
-      total?: number;
+      type: "ready" | "built" | "error";
+      species?: number[];
+      requestId?: number;
+      bytes?: ArrayBuffer;
       message?: string;
-      packs?: Array<{ species: number; bytes: ArrayBuffer }>;
     }>) => {
-      if (event.data.type === "progress") {
-        onProgress?.(event.data.done || 0, event.data.total || 151);
+      if (event.data.type === "ready") {
+        const species = event.data.species || [];
+        const models = species
+          .map((value) => ({ species: value, filename: `${String(value).padStart(3, "0")}.dsm` }))
+          .sort((a, b) => a.species - b.species);
+        session = {
+          sessionId: newSessionId(),
+          models,
+          worker,
+          packs: new Map(),
+          pending: new Map(),
+          nextRequestId: 1,
+        };
+        browserSessions.set(session.sessionId, session);
+        settled = true;
+        onProgress?.(0, models.length || 151);
+        resolve({ sessionId: session.sessionId, models });
         return;
       }
-      worker.terminate();
-      if (event.data.type === "error") {
-        reject(new Error(event.data.message || "ROM extraction failed."));
+
+      if (event.data.type === "built") {
+        if (!session || event.data.requestId === undefined || !event.data.bytes) return;
+        const pending = session.pending.get(event.data.requestId);
+        if (!pending) return;
+        session.pending.delete(event.data.requestId);
+        session.packs.set(event.data.species || 0, event.data.bytes);
+        pending.resolve(event.data.bytes.slice(0));
         return;
       }
-      const packs = event.data.packs || [];
-      const sessionId = newSessionId();
-      const models = packs
-        .map(({ species }) => ({ species, filename: `${String(species).padStart(3, "0")}.dsm` }))
-        .sort((a, b) => a.species - b.species);
-      browserSessions.set(sessionId, {
-        sessionId,
-        models,
-        packs: new Map(packs.map(({ species, bytes: pack }) => [species, pack])),
-      });
-      resolve({ sessionId, models });
+
+      if (event.data.requestId !== undefined && session) {
+        const pending = session.pending.get(event.data.requestId);
+        if (pending) {
+          session.pending.delete(event.data.requestId);
+          pending.reject(new Error(event.data.message || "ROM model build failed."));
+        }
+        return;
+      }
+
+      fail(new Error(event.data.message || "ROM extraction failed."));
     };
     worker.onerror = (event) => {
-      worker.terminate();
-      reject(new Error(event.message || "ROM extraction failed."));
+      fail(new Error(event.message || "ROM extraction failed."));
     };
-    worker.postMessage({ bytes }, [bytes]);
+    worker.postMessage({ type: "open", bytes }, [bytes]);
   });
 }
 
 export async function fetchImportedModel(sessionId: string, species: number) {
   const session = browserSessions.get(sessionId);
-  const pack = session?.packs.get(species);
-  if (!pack) throw new Error(`Could not load model #${String(species).padStart(3, "0")}.`);
-  return pack.slice(0);
+  if (!session) throw new Error("The imported ROM session is no longer available.");
+  const pack = session.packs.get(species);
+  if (pack) return pack.slice(0);
+
+  const requestId = session.nextRequestId++;
+  return new Promise<ArrayBuffer>((resolve, reject) => {
+    session.pending.set(requestId, { resolve, reject });
+    try {
+      session.worker.postMessage({ type: "build", requestId, species });
+    } catch (cause) {
+      session.pending.delete(requestId);
+      reject(cause);
+    }
+  });
+}
+
+export function closeImportedSession(sessionId: string) {
+  const session = browserSessions.get(sessionId);
+  if (!session) return;
+  const error = new Error("The imported ROM session was closed.");
+  for (const pending of session.pending.values()) pending.reject(error);
+  session.pending.clear();
+  session.worker.terminate();
+  browserSessions.delete(sessionId);
 }
