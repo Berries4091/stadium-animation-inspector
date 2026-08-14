@@ -5,6 +5,7 @@ import stadiumFragmentSource from "./vendor/stadium/StadiumFragment.lua?raw";
 import stadiumFxSource from "./vendor/stadium/StadiumFx.lua?raw";
 import stadiumRomSource from "./vendor/stadium/StadiumRom.lua?raw";
 import { STADIUM_LUA_COMPATIBILITY } from "./luaCompatibility";
+import { formatModelBuildFailure } from "./romErrors";
 
 type WorkerMessage = { bytes: ArrayBuffer };
 type WorkerResponse =
@@ -59,6 +60,13 @@ function runExtraction(bytes: Uint8Array) {
     workerScope.postMessage({ type: "progress", done, total });
     return 0;
   };
+  const reportFailure = (current: any) => {
+    const failed = lua.lua_tointeger(current, 1);
+    const total = lua.lua_tointeger(current, 2);
+    const detailBytes = lua.lua_tostring(current, 3);
+    const detail = detailBytes instanceof Uint8Array ? to_jsstring(detailBytes) : undefined;
+    return lauxlib.luaL_error(current, to_luastring(formatModelBuildFailure(failed, total, detail)));
+  };
 
   lua.lua_newtable(state);
   lua.lua_pushjsfunction(state, requireModule);
@@ -67,6 +75,8 @@ function runExtraction(bytes: Uint8Array) {
   lua.lua_setfield(state, -2, to_luastring("write"));
   lua.lua_pushjsfunction(state, reportProgress);
   lua.lua_setfield(state, -2, to_luastring("progress"));
+  lua.lua_pushjsfunction(state, reportFailure);
+  lua.lua_setfield(state, -2, to_luastring("reportFailure"));
 
   lua.lua_newtable(state);
   lua.lua_newtable(state);
@@ -92,7 +102,7 @@ function runExtraction(bytes: Uint8Array) {
     local job = StadiumBuild.job(rom, V.write, StadiumRom.N_POKEMON)
     while job:step() do V.progress(job.done, job.total) end
     V.progress(job.done, job.total)
-    if #job.failed > 0 then error(("%d of %d model files could not be built"):format(#job.failed, job.total)) end
+    if #job.failed > 0 then V.reportFailure(#job.failed, job.total, job.lastError) end
   `;
   const status = lauxlib.luaL_dostring(state, to_luastring(script));
   if (status !== lua.LUA_OK) throw new Error(errorMessage(state));
