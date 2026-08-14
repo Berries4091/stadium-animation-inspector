@@ -6,12 +6,12 @@ export default defineConfig({
   // Fengari reads this optional Node-only setting without guarding `process`.
   // Replace just that lookup so its other `typeof process` browser checks stay intact.
   define: {
-    "process.env.FENGARICONF": "undefined",
+    "process.env.FENGARICONF": "\"\"",
   },
   optimizeDeps: {
     esbuildOptions: {
       define: {
-        "process.env.FENGARICONF": "undefined",
+        "process.env.FENGARICONF": "\"\"",
       },
     },
   },

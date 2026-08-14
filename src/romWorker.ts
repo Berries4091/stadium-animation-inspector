@@ -4,6 +4,7 @@ import stadiumBuildSource from "./vendor/stadium/StadiumBuild.lua?raw";
 import stadiumFragmentSource from "./vendor/stadium/StadiumFragment.lua?raw";
 import stadiumFxSource from "./vendor/stadium/StadiumFx.lua?raw";
 import stadiumRomSource from "./vendor/stadium/StadiumRom.lua?raw";
+import { STADIUM_LUA_COMPATIBILITY } from "./luaCompatibility";
 
 type WorkerMessage = { bytes: ArrayBuffer };
 type WorkerResponse =
@@ -80,7 +81,7 @@ function runExtraction(bytes: Uint8Array) {
   lua.lua_pushlstring(state, bytes, bytes.length);
   lua.lua_setglobal(state, to_luastring("ROM_BYTES"));
 
-  const script = `
+  const script = `${STADIUM_LUA_COMPATIBILITY}
     local StadiumRom = V.require("StadiumRom")
     local StadiumBuild = V.require("StadiumBuild")
     local rom, err = StadiumRom.open(ROM_BYTES)
