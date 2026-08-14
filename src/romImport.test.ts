@@ -31,7 +31,7 @@ describe("detectFileKind", () => {
         super();
         workers.push(this);
       }
-    } as typeof Worker;
+    } as unknown as typeof Worker;
 
     try {
       const session = await importStadiumRom(new ArrayBuffer(4));

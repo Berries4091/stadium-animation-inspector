@@ -24,6 +24,11 @@ type BrowserSession = ImportedSession & {
   nextRequestId: number;
 };
 
+type RomWorkerResponse =
+  | { type: "ready"; species: number[] }
+  | { type: "built"; requestId: number; species: number; bytes: ArrayBuffer }
+  | { type: "error"; requestId?: number; message?: string };
+
 const browserSessions = new Map<string, BrowserSession>();
 
 function startsWithText(bytes: Uint8Array, text: string) {
@@ -65,13 +70,7 @@ export function importStadiumRom(bytes: ArrayBuffer, onProgress?: (done: number,
       }
     };
 
-    worker.onmessage = (event: MessageEvent<{
-      type: "ready" | "built" | "error";
-      species?: number[];
-      requestId?: number;
-      bytes?: ArrayBuffer;
-      message?: string;
-    }>) => {
+    worker.onmessage = (event: MessageEvent<RomWorkerResponse>) => {
       if (event.data.type === "ready") {
         const species = event.data.species || [];
         const models = species
@@ -93,11 +92,11 @@ export function importStadiumRom(bytes: ArrayBuffer, onProgress?: (done: number,
       }
 
       if (event.data.type === "built") {
-        if (!session || event.data.requestId === undefined || !event.data.bytes) return;
+        if (!session) return;
         const pending = session.pending.get(event.data.requestId);
         if (!pending) return;
         session.pending.delete(event.data.requestId);
-        session.packs.set(event.data.species || 0, event.data.bytes);
+        session.packs.set(event.data.species, event.data.bytes);
         pending.resolve(event.data.bytes.slice(0));
         return;
       }

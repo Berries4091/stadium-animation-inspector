@@ -15,8 +15,9 @@ Open the local Vite URL, then drop a `.dsm` file into the window. The app reads
 both raw `DSM3` files and the compressed `PVDZ` files written by the game.
 You can also choose or drop a Pokémon Stadium US 1.0 `.z64`, `.n64`, or `.v64`
 ROM. Extraction runs locally in a Web Worker using the same small Stadium
-extractor modules as PotatoVoxel, builds all 151 model packs in memory, and
-adds a model selector to the inspector. The ROM never leaves the browser.
+extractor modules as PotatoVoxel. After the ROM opens, choose one of the 151
+Pokémon in the selector to build its model on demand; previously selected
+models are cached for the session. The ROM never leaves the browser.
 
 On macOS, cached packs are usually in:
 
@@ -35,4 +36,5 @@ installation is required.
 ```sh
 npm test
 npm run build
+npm run self-test -- '/path/to/Pokemon Stadium (USA).z64'
 ```
