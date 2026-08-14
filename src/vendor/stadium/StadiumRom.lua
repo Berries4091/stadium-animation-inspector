@@ -103,6 +103,12 @@ end
 -- kept this module portable to any Lua the engine runs on.
 
 local CHUNK = 4096
+local UINT32 = 2 ^ 32
+-- Keep these as exponentiated numbers rather than hexadecimal integer
+-- literals: Fengari stores Lua integers as signed 32-bit values, where
+-- 0x80000000 is negative and 0x100000000 wraps to zero.
+local MASK_TOP = 2 ^ 31
+local MASK_MOD = 2 ^ 32
 
 -- LuaJIT keeps `unpack` global; 5.2+ moved it onto table.
 local unpack = unpack or table.unpack
@@ -148,7 +154,7 @@ function StadiumRom.yay0(src, base)
       maskP = maskP + 4
       bits = 32
     end
-    if mask >= 0x80000000 then
+    if mask < 0 or mask >= MASK_TOP then
       pos = pos + 1
       out[pos] = byte(src, chunkP)
       chunkP = chunkP + 1
@@ -173,7 +179,8 @@ function StadiumRom.yay0(src, base)
         copy = copy + 1
       end
     end
-    mask = (mask * 2) % 0x100000000
+    mask = mask * 2
+    if mask >= MASK_MOD then mask = mask - MASK_MOD end
     bits = bits - 1
   end
 
@@ -212,7 +219,8 @@ end
 function Rom:u32(o)
   local a, b, c, d = byte(self.data, o + 1, o + 4)
   if not d then return 0 end
-  return ((a * 256 + b) * 256 + c) * 256 + d
+  local v = ((a * 256 + b) * 256 + c) * 256 + d
+  return v < 0 and v + UINT32 or v
 end
 
 function Rom:vramToRom(vram)

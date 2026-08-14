@@ -52,7 +52,8 @@ function runExtraction(bytes: Uint8Array) {
     const packed = lua.lua_tolstring(current, 2);
     if (!(packed instanceof Uint8Array)) return lauxlib.luaL_error(current, to_luastring("extractor returned invalid DSM bytes"));
     packs.push({ species, bytes: packed.slice().buffer });
-    return 0;
+    lua.lua_pushboolean(current, true);
+    return 1;
   };
   const reportProgress = (current: any) => {
     const done = lua.lua_tointeger(current, 1);
@@ -103,6 +104,7 @@ function runExtraction(bytes: Uint8Array) {
     local job = StadiumBuild.job(rom, V.write, StadiumRom.N_POKEMON)
     while job:step() do V.progress(job.done, job.total) end
     V.progress(job.done, job.total)
+    if job.error then error(job.error) end
     if #job.failed > 0 then V.reportFailure(#job.failed, job.total, job.lastError) end
   `;
   const status = lauxlib.luaL_dostring(state, to_luastring(script));

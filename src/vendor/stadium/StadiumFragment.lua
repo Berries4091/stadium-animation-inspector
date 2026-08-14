@@ -51,7 +51,9 @@ local floor = math.floor
 
 -- Where the module is linked to run. Every pointer inside it is an address in
 -- that space, so subtracting this turns one into a file offset.
-local BASE = 0x8FF00000
+local BASE = 2 ^ 31 + 0x0FF00000
+local SEGMENT_SIZE = 0x100000
+local UINT32 = 2 ^ 32
 
 -- Size of each geo-layout command, by opcode. A command this does not
 -- understand is still stepped over correctly, which is what lets an unknown
@@ -171,7 +173,8 @@ end
 
 function Frag:u32(o)
   local a, b, c, d = byte(self.d, o + 1, o + 4)
-  return ((a * 256 + b) * 256 + c) * 256 + d
+  local v = ((a * 256 + b) * 256 + c) * 256 + d
+  return v < 0 and v + UINT32 or v
 end
 
 function Frag:s32(o)
@@ -183,6 +186,13 @@ end
 -- A pointer as a file offset, or nil for the null pointer.
 function Frag:off(ptr)
   if ptr == 0 then return nil end
+  -- Display-list commands use 1 MiB segmented addresses while geo and
+  -- animation structures use the linked virtual address space. The segment
+  -- number is the high part of the address; the fragment offset is its low
+  -- 20 bits (for example, 0x00900c00 -> 0x0c00).
+  if ptr > 0 and ptr < 0x10000000 then
+    return ptr % SEGMENT_SIZE
+  end
   return ptr - BASE
 end
 
@@ -201,7 +211,9 @@ function Frag:root()
       local w2 = self:u32(o + 4)
       if floor(w2 / 0x4000000) == 0x09                -- addiu rX, rX, imm
           and floor(w2 / 0x200000) % 0x20 == reg then
-        return self:u16(o + 2) * 65536 + self:s16(o + 6) - BASE
+        -- The high-half multiply must stay above Fengari's signed 32-bit
+        -- integer path until the unsigned virtual address is complete.
+        return self:u16(o + 2) * 65536.0 + self:s16(o + 6) - BASE
       end
     end
   end
