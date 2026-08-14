@@ -64,7 +64,7 @@ export default function App() {
     setLoaded({ model, filename, bytes });
     setAnimationIndex(model.anims.length > 0 ? 0 : -1);
     setFrame(0);
-    setPlaying(false);
+    setPlaying(model.anims.length > 0);
   }
 
   async function loadImportedModel(session: ImportedSession, species: number) {
