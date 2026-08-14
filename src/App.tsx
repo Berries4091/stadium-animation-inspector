@@ -272,21 +272,20 @@ export default function App() {
         <aside className="panel clip-panel">
           {romSession && (
             <div className="model-library">
-              <p className="panel-kicker">IMPORTED MODELS</p>
-              <select
-                className="model-select"
-                value={selectedSpecies ?? ""}
+              <p className="panel-kicker">IMPORTED ROM</p>
+              <button
+                className="secondary-button back-to-pokemon"
+                type="button"
                 disabled={loadingSpecies !== null}
-                onChange={(event) => {
-                  const species = Number(event.target.value);
-                  setRomStatus(null);
-                  void loadImportedModel(romSession, species);
+                onClick={() => {
+                  setLoaded(null);
+                  setError(null);
+                  setRomStatus("Choose another Pokémon.");
+                  setPlaying(false);
                 }}
               >
-                {romSession.models.map((model) => (
-                  <option value={model.species} key={model.filename}>#{String(model.species).padStart(3, "0")}</option>
-                ))}
-              </select>
+                Back to Pokémon
+              </button>
               <small>{loadingSpecies !== null ? "Building model…" : `${romSession.models.length} models from imported ROM`}</small>
             </div>
           )}
