@@ -4,12 +4,15 @@ import type { DsmModel } from "./dsm/format";
 import { parseDsm } from "./dsm/parser";
 import { buildAnimationReport } from "./report";
 import {
+  closeImportedSession,
   detectFileKind,
   fetchImportedModel,
   importStadiumRom,
 } from "./romImport";
 import type { ImportedSession } from "./romImport";
+import { pokemonName } from "./pokemon";
 import ModelViewport from "./scene/ModelViewport";
+import PokemonSelector from "./PokemonSelector";
 
 type LoadedPack = {
   model: DsmModel;
@@ -45,7 +48,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [romStatus, setRomStatus] = useState<string | null>(null);
-  const [modelLoading, setModelLoading] = useState(false);
+  const [loadingSpecies, setLoadingSpecies] = useState<number | null>(null);
 
   const animation = loaded?.model.anims[animationIndex] ?? null;
   const contexts = loaded ? animationContextNames(loaded.model, animationIndex) : [];
@@ -65,36 +68,39 @@ export default function App() {
   }
 
   async function loadImportedModel(session: ImportedSession, species: number) {
-    setModelLoading(true);
+    setLoadingSpecies(species);
     setError(null);
+    setRomStatus(`Building ${pokemonName(species)}…`);
     try {
       const buffer = await fetchImportedModel(session.sessionId, species);
       useParsedModel(buffer, `${String(species).padStart(3, "0")}.dsm`, buffer.byteLength);
       setSelectedSpecies(species);
+      setRomStatus(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The imported model could not be read.");
     } finally {
-      setModelLoading(false);
+      setLoadingSpecies(null);
     }
   }
 
-  async function importRom(buffer: ArrayBuffer) {
-    setLoaded(null);
+  function clearRomSession() {
+    if (romSession) closeImportedSession(romSession.sessionId);
     setRomSession(null);
     setSelectedSpecies(null);
+  }
+
+  async function importRom(buffer: ArrayBuffer) {
+    clearRomSession();
+    setLoaded(null);
     setError(null);
     setCopyStatus(null);
     setPlaying(false);
-    setRomStatus("Extracting 151 Stadium models…");
+    setRomStatus("Opening Stadium ROM…");
     try {
-      const session = await importStadiumRom(buffer, (done, total) => {
-        setRomStatus(`Extracting Stadium models… ${done} / ${total}`);
-      });
-      const first = session.models[0];
-      if (!first) throw new Error("The ROM produced no model files.");
+      const session = await importStadiumRom(buffer);
+      if (session.models.length === 0) throw new Error("The ROM produced no model files.");
       setRomSession(session);
-      setRomStatus(`Imported ${session.models.length} model packs.`);
-      await loadImportedModel(session, first.species);
+      setRomStatus(`ROM ready — choose one of ${session.models.length} Pokémon.`);
     } catch (cause) {
       setRomStatus(null);
       setError(cause instanceof Error ? cause.message : "The Stadium ROM could not be imported.");
@@ -116,8 +122,7 @@ export default function App() {
       if (kind !== "model") {
         throw new Error("Choose a DSM/PVDZ model pack or a Pokemon Stadium .z64/.n64/.v64 ROM.");
       }
-      setRomSession(null);
-      setSelectedSpecies(null);
+      clearRomSession();
       setRomStatus(null);
       useParsedModel(buffer, file.name, file.size);
     } catch (cause) {
@@ -155,6 +160,44 @@ export default function App() {
   };
 
   if (!loaded) {
+    if (romSession) {
+      return (
+        <main className="app-shell selector-app-shell">
+          <header className="app-header">
+            <div>
+              <p className="eyebrow">POTATO VOXEL / STADIUM TOOLS</p>
+              <h1>Choose a Pokémon</h1>
+            </div>
+            <label className="secondary-button">
+              Load another
+              <input
+                type="file"
+                accept={`${MODEL_ACCEPT},${ROM_ACCEPT}`}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void loadFile(file);
+                }}
+              />
+            </label>
+          </header>
+          <section className="selector-intro">
+            <div>
+              <p className="panel-kicker">ROM IMPORT READY</p>
+              <h2>Select an individual model to extract</h2>
+              <p>The ROM stays loaded locally while you choose which Pokémon to inspect.</p>
+            </div>
+            {romStatus && <p className="import-status">{romStatus}</p>}
+          </section>
+          <PokemonSelector
+            models={romSession.models}
+            selectedSpecies={selectedSpecies}
+            loadingSpecies={loadingSpecies}
+            onSelect={(species) => void loadImportedModel(romSession, species)}
+          />
+          {error && <p className="error-message selector-error">{error}</p>}
+        </main>
+      );
+    }
     return (
       <main className="app-shell">
         <header className="app-header">
@@ -233,7 +276,7 @@ export default function App() {
               <select
                 className="model-select"
                 value={selectedSpecies ?? ""}
-                disabled={modelLoading}
+                disabled={loadingSpecies !== null}
                 onChange={(event) => {
                   const species = Number(event.target.value);
                   setRomStatus(null);
@@ -244,7 +287,7 @@ export default function App() {
                   <option value={model.species} key={model.filename}>#{String(model.species).padStart(3, "0")}</option>
                 ))}
               </select>
-              <small>{modelLoading ? "Loading model…" : `${romSession.models.length} packs from imported ROM`}</small>
+              <small>{loadingSpecies !== null ? "Building model…" : `${romSession.models.length} models from imported ROM`}</small>
             </div>
           )}
           <div className="panel-heading">
