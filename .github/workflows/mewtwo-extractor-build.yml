@@ -1,0 +1,35 @@
+name: Mewtwo extractor build verification
+on:
+  push:
+    branches:
+      - mewtwo-150-extraction-v159
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Build inspector and ROM worker
+        run: npm run build
+      - name: Run repository tests
+        run: npm test
+      - name: Verify Mewtwo extractor syntax
+        run: node --check scripts/mewtwo-extract.mjs
+      - name: Verify generated ROM worker exists
+        run: ls -l dist/assets/romWorker-*.js
+      - name: Package built inspector (no ROM)
+        uses: actions/upload-artifact@v4
+        with:
+          name: stadium-inspector-built-no-rom
+          path: dist/
+          retention-days: 7
