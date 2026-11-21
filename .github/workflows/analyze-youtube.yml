@@ -1,0 +1,44 @@
+name: Analyze YouTube video frames
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: "Public video URL you are authorized to process"
+        required: true
+        default: "https://www.youtube.com/watch?v=rM-RGs2XYEc"
+      interval_seconds:
+        description: "Seconds between sampled frames"
+        required: true
+        default: "30"
+jobs:
+  sample:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python -m pip install Pillow yt-dlp
+      - name: Download permitted public video
+        env:
+          VIDEO_URL: ${{ inputs.video_url }}
+        run: |
+          yt-dlp --no-playlist --max-filesize 500M -f "bv*[height<=480]+ba/b[height<=480]/best" --merge-output-format mp4 -o "source.%(ext)s" "$VIDEO_URL"
+      - name: Sample frames
+        env:
+          INTERVAL: ${{ inputs.interval_seconds }}
+        run: |
+          VIDEO=$(find . -maxdepth 1 -type f -name 'source.*' | head -n 1)
+          test -n "$VIDEO"
+          python tools/video_analysis/sample_frames.py "$VIDEO" --interval "$INTERVAL" --out video-report
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: video-analysis-report
+          path: video-report/
+          if-no-files-found: warn
